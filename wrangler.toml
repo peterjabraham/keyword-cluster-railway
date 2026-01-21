@@ -1,0 +1,64 @@
+name = "seo-clustering-orchestrator"
+main = "workers/orchestrator.ts"
+compatibility_date = "2024-11-12"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "seo-clustering"
+database_id = "REPLACE_WITH_D1_ID"
+
+[[kv_namespaces]]
+binding = "SESSION_CACHE"
+id = "REPLACE_WITH_KV_ID"
+
+[[kv_namespaces]]
+binding = "CRAWL_CACHE"
+id = "REPLACE_WITH_KV_ID"
+
+[[kv_namespaces]]
+binding = "SERP_CACHE"
+id = "REPLACE_WITH_KV_ID"
+
+[[queues.producers]]
+queue = "extraction-complete"
+binding = "EXTRACTION_QUEUE"
+
+[[queues.consumers]]
+queue = "extraction-complete"
+script_name = "keyword-expander"
+
+[[queues.producers]]
+queue = "expansion-complete"
+binding = "EXPANSION_QUEUE"
+
+[[queues.consumers]]
+queue = "expansion-complete"
+script_name = "clustering-engine"
+
+[[queues.producers]]
+queue = "clustering-complete"
+binding = "CLUSTERING_QUEUE"
+
+[[queues.consumers]]
+queue = "clustering-complete"
+script_name = "intent-classifier"
+
+[[queues.producers]]
+queue = "intent-complete"
+binding = "INTENT_QUEUE"
+
+[[queues.consumers]]
+queue = "intent-complete"
+script_name = "user-state-router"
+
+[[services]]
+binding = "URL_EXTRACTOR"
+service = "url-extractor"
+
+[[services]]
+binding = "COMPETITOR_ANALYZER"
+service = "competitor-analyzer"
+
+[[services]]
+binding = "DATA_CONNECTOR"
+service = "data-connector"

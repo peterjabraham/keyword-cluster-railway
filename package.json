@@ -1,0 +1,8 @@
+{
+  "name": "seo-clustering-engine",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "workers"
+  ]
+}
