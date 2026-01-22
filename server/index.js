@@ -450,6 +450,7 @@ const getLocationCode = (country) =>
 
 const dataForSeoLimiter = {
   lastRequestAt: 0,
+  // 12 requests/min limit = 5000ms minimum. Using 6000ms for safety margin.
   minIntervalMs: 6000,
   queue: Promise.resolve()
 };
@@ -470,13 +471,24 @@ const scheduleDataForSeo = (task) => {
   return dataForSeoLimiter.queue;
 };
 
-const fetchDataForSeo = async (endpoint, payload) => {
+/**
+ * Retry-able status codes from DataForSEO:
+ * - 40202: Rate limit exceeded (DataForSEO internal)
+ * - 50301: 3rd Party API Service Unavailable (Google Ads "Too many requests")
+ */
+const RETRYABLE_STATUS_CODES = [40202, 50301];
+
+const fetchDataForSeo = async (endpoint, payload, attempt = 1) => {
+  const maxRetries = 5;
+  const baseDelayMs = 6000;
+  
   const login = process.env.DATAFORSEO_LOGIN;
   const password = process.env.DATAFORSEO_PASSWORD;
   if (!login || !password) {
     throw new Error("Missing DataForSEO credentials.");
   }
   const auth = Buffer.from(`${login}:${password}`).toString("base64");
+  
   return scheduleDataForSeo(async () => {
     const response = await fetch(`https://api.dataforseo.com/v3/${endpoint}`, {
       method: "POST",
@@ -492,9 +504,17 @@ const fetchDataForSeo = async (endpoint, payload) => {
     }
     const data = await response.json();
     const task = data?.tasks?.[0];
-    if (task?.status_code === 40202) {
-      await new Promise((resolve) => setTimeout(resolve, 6000));
-      return fetchDataForSeo(endpoint, payload);
+    
+    // Check if we should retry
+    if (task && RETRYABLE_STATUS_CODES.includes(task.status_code)) {
+      if (attempt >= maxRetries) {
+        throw new Error(`DataForSEO rate limit: ${task.status_message} (after ${maxRetries} retries)`);
+      }
+      // Exponential backoff with jitter
+      const delayMs = baseDelayMs * Math.pow(2, attempt - 1) + Math.random() * 1000;
+      console.log(`DataForSEO ${task.status_code}: retrying in ${Math.round(delayMs)}ms (attempt ${attempt}/${maxRetries})`);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      return fetchDataForSeo(endpoint, payload, attempt + 1);
     }
     return data;
   });
@@ -512,31 +532,20 @@ async function dataForSeoKeywords(seedKeywords, locationCode) {
     return [];
   }
 
-  const auth = Buffer.from(`${login}:${password}`).toString("base64");
-  const response = await fetch(
-    "https://api.dataforseo.com/v3/keywords_data/google_ads/keywords_for_keywords/live",
+  // Use fetchDataForSeo for consistent rate limiting and retry handling
+  const payload = [
     {
-      method: "POST",
-      headers: {
-        Authorization: `Basic ${auth}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify([
-        {
-          location_code: locationCode,
-          language_code: "en",
-          keywords: sanitizedKeywords
-        }
-      ])
+      location_code: locationCode,
+      language_code: "en",
+      keywords: sanitizedKeywords
     }
+  ];
+  
+  const data = await fetchDataForSeo(
+    "keywords_data/google_ads/keywords_for_keywords/live",
+    payload
   );
 
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`DataForSEO error: ${error}`);
-  }
-
-  const data = await response.json();
   const task = data?.tasks?.[0];
   if (task && task.status_code && task.status_code !== 20000) {
     throw new Error(`DataForSEO task error: ${task.status_message}`);
