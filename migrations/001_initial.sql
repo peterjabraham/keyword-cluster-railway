@@ -2,7 +2,7 @@ CREATE TABLE projects (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   domain TEXT NOT NULL,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
   status TEXT DEFAULT 'pending'
 );
 

@@ -7,14 +7,20 @@ const statusDot: Record<OutputStatus["status"], string> = {
   error: "bg-rose-400"
 };
 
-export function OutputPanel({ outputs }: { outputs: OutputStatus[] }) {
+export function OutputPanel({
+  outputs,
+  projectId
+}: {
+  outputs: OutputStatus[];
+  projectId: string | null;
+}) {
   return (
     <section className="space-y-3">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold text-slate-200">Outputs</h2>
-        <button className="rounded bg-slate-800 px-3 py-1 text-xs uppercase tracking-widest text-slate-200">
-          Export
-        </button>
+        <span className="text-xs uppercase tracking-widest text-slate-500">
+          Exports
+        </span>
       </div>
       <div className="space-y-3">
         {outputs.map((output) => (
@@ -31,9 +37,27 @@ export function OutputPanel({ outputs }: { outputs: OutputStatus[] }) {
                   {output.title}
                 </span>
               </div>
-              <span className="text-xs uppercase text-slate-400">
-                {output.status}
-              </span>
+              <div className="flex items-center gap-2 text-xs uppercase text-slate-400">
+                <span>{output.status}</span>
+                {projectId && (
+                  <>
+                    <a
+                      className="rounded border border-slate-700 px-2 py-1 text-[10px] text-slate-300 hover:text-white"
+                      href={`/api/projects/${projectId}/outputs/${output.id}`}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      JSON
+                    </a>
+                    <a
+                      className="rounded border border-slate-700 px-2 py-1 text-[10px] text-slate-300 hover:text-white"
+                      href={`/api/projects/${projectId}/outputs/${output.id}?format=csv`}
+                    >
+                      CSV
+                    </a>
+                  </>
+                )}
+              </div>
             </div>
             <p className="mt-2 text-xs text-slate-400">{output.detail}</p>
           </div>

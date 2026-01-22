@@ -67,3 +67,34 @@ export const routerInputSchema = z.object({
     outcomes: z.array(z.string())
   })
 });
+
+export const stage1InputSchema = z.object({
+  targetUrl: z.string().min(1),
+  competitors: z.array(z.string()).optional(),
+  initialClusters: z.array(z.string()).optional(),
+  industry: z.string().optional(),
+  audience: z.string().optional(),
+  constraints: z.array(z.string()).optional(),
+  marketType: z.enum(["b2b", "b2c"])
+});
+
+export const stage1ClusterSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  intentStage: z.string().optional(),
+  concern: z.string().optional(),
+  score: z.number().optional()
+});
+
+export const stage1KeywordRowSchema = z.object({
+  Keyword: z.string(),
+  "Search Volume": z.union([z.number(), z.string()]).optional(),
+  CPC: z.union([z.number(), z.string()]).optional(),
+  Competition: z.union([z.number(), z.string()]).optional(),
+  "Intent Stage": z.string().optional(),
+  "Source Type (brand/generic)": z.string().optional(),
+  Competitor: z.string().optional(),
+  "Competitors Bidding": z.string().optional(),
+  Cluster: z.string().optional(),
+  Concern: z.string().optional()
+});

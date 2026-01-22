@@ -5,9 +5,13 @@
   "type": "commonjs",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "test:sanitize": "node scripts/keyword-sanitizer.test.js",
+    "stage1:smoke": "node scripts/stage1-smoke.js"
   },
   "dependencies": {
-    "express": "4.19.2"
+    "dotenv": "16.4.5",
+    "express": "4.19.2",
+    "pg": "8.13.1"
   }
 }

@@ -1,17 +1,48 @@
-# Technical Development Plan: SEO Clustering & User-State Router
+# Technical Development Plan: Keyword Cluster & User-State Router
 
-## System Architecture Overview
+## Current System Architecture Overview (Stage 1)
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                        CLOUDFLARE PAGES (Frontend)                          │
-│   Single-page app with step-based wizard UI (not tabs)                      │
+│                     RAILWAY WEB (Frontend + API)                             │
+│   Vite/React SPA built to frontend/dist and served by Express                │
+└───────────────────────────────┬─────────────────────────────────────────────┘
+                                │
+                                ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                       STAGE 1 PIPELINE (Node/Express)                        │
+│  Inputs → OpenAI cluster suggestions → selection → DataForSEO metrics         │
+│  Enrichment: intent stage, source type, competitor, cluster/concern           │
+└───────────────────────────────┬─────────────────────────────────────────────┘
+                                │
+                                ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        POSTGRES (Railway)                                    │
+│  projects + project_outputs (stage1_input, clusters, selection, keywords)    │
+│  status_json for SSE updates                                                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Current Implementation Snapshot (Live)
+- **Frontend**: `frontend/` Vite + React, built to `frontend/dist` and served by Express.
+- **Backend**: `server/index.js` provides Stage 1 endpoints.
+- **Persistence**: Postgres via `projects` and `project_outputs` tables.
+- **Stage 1 flow**: Create project → Generate clusters → Select clusters → Run keyword analysis → CSV export.
+- **Integrations**: OpenAI for cluster suggestions; DataForSEO for keyword ideas + metrics.
+- **Status**: SSE stream at `/api/projects/:id/stream` broadcasts `status` and `output`.
+
+## Future System Architecture Overview (Planned)
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                     RAILWAY WEB (Frontend + API)                             │
+│   Vite/React SPA served by Express at a single Railway URL                   │
 │   Progressive disclosure: show outputs as they complete                      │
 └───────────────────────────────┬─────────────────────────────────────────────┘
                                 │
                                 ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                      ORCHESTRATOR WORKER                                     │
+│                      ORCHESTRATOR SERVICE (Node/Express)                     │
 │   Receives input payload → spawns parallel agents → aggregates results       │
 └───────────────────────────────┬─────────────────────────────────────────────┘
                                 │
@@ -20,21 +51,21 @@
 ┌───────────────┐       ┌───────────────┐       ┌───────────────┐
 │  URL Extractor │       │  Competitor    │       │  Data Source  │
 │  Agent         │       │  Analyzer      │       │  Connector    │
-│                │       │  Agent         │       │  Agent        │
+│  (module/job)  │       │  (module/job)  │       │  (module/job)  │
 └───────┬───────┘       └───────┬───────┘       └───────┬───────┘
         │                       │                       │
         └───────────────────────┼───────────────────────┘
                                 ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                      PROCESSING PIPELINE WORKERS                             │
+│                      PROCESSING PIPELINE (Backend Jobs)                      │
 │   Keyword Expansion → Clustering → Intent Classification → Routing          │
 └─────────────────────────────────────────────────────────────────────────────┘
                                 │
                                 ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                      CLOUDFLARE D1 + KV                                      │
-│   D1: Structured outputs (clusters, routing tables)                          │
-│   KV: Cache layers, intermediate results, session state                      │
+│                      POSTGRES (Railway)                                      │
+│   Structured outputs + project status + streaming checkpoints                │
+│   Primary persistence for outputs and status                                 │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -46,17 +77,20 @@
 Replace traditional tab UI with **skill-based agents** that process independently and stream results as ready.
 
 ### 2. Parallel Execution
-Tasks without dependencies run simultaneously using Cloudflare Workers' concurrent execution model.
+Tasks without dependencies run simultaneously inside the backend using async jobs
+and parallel calls (with a future move to a job queue if needed).
 
-### 3. Task Chaining via Queues
-Use Cloudflare Queues to chain dependent tasks without blocking.
+### 3. Task Chaining via Job State
+Use a job table + status transitions in Postgres to chain dependent tasks without
+blocking the request thread.
 
 ### 4. Progressive Output
 Results display as each agent completes—no waiting for full pipeline.
 
 ---
 
-## Agent Definitions
+## Future: Agent Definitions (Planned)
+The sections below describe the multi-agent system that is not yet implemented.
 
 ### Agent 1: URL Extractor
 **Trigger:** Target domain URL submitted  
@@ -227,58 +261,27 @@ interface RouterOutput {
 
 ---
 
-## Cloudflare Infrastructure
+## Railway Infrastructure
 
-### Workers (7 agents + 1 orchestrator)
+### Backend Service (Node/Express)
 ```
-/workers
-├── orchestrator.ts          # Job coordinator
-├── url-extractor.ts         # Agent 1
-├── competitor-analyzer.ts   # Agent 2
-├── data-connector.ts        # Agent 3
-├── keyword-expander.ts      # Agent 4
-├── clustering-engine.ts     # Agent 5
-├── intent-classifier.ts     # Agent 6
-└── user-state-router.ts     # Agent 7
+/server
+├── index.js                 # API + orchestrator
 ```
 
-### Queue Configuration
-```toml
-# wrangler.toml
-[[queues.producers]]
-queue = "extraction-complete"
-binding = "EXTRACTION_QUEUE"
-
-[[queues.consumers]]
-queue = "extraction-complete"
-script_name = "keyword-expander"
-
-[[queues.producers]]
-queue = "expansion-complete"
-binding = "EXPANSION_QUEUE"
-
-[[queues.consumers]]
-queue = "expansion-complete"
-script_name = "clustering-engine"
-
-[[queues.producers]]
-queue = "clustering-complete"
-binding = "CLUSTERING_QUEUE"
-
-[[queues.consumers]]
-queue = "clustering-complete"
-script_name = "intent-classifier"
-
-[[queues.producers]]
-queue = "intent-complete"
-binding = "INTENT_QUEUE"
-
-[[queues.consumers]]
-queue = "intent-complete"
-script_name = "user-state-router"
+### Frontend Build (Single URL)
+```
+/frontend
+├── dist/                    # Built SPA served by Express
 ```
 
-### D1 Database Schema
+### Job Orchestration (Railway)
+Use a job/status table in Postgres to drive sequencing:
+- `extraction_complete` → `expansion_complete` → `clustering_complete`
+- Each step updates status rows, and the backend triggers the next step.
+
+### Postgres Schema (Railway)
+This schema is reused and applied via SQL migrations.
 ```sql
 -- Projects table
 CREATE TABLE projects (
@@ -354,21 +357,9 @@ CREATE TABLE proof_blocks (
 );
 ```
 
-### KV Namespaces
-```toml
-# wrangler.toml
-[[kv_namespaces]]
-binding = "SESSION_CACHE"
-id = "xxx"
-
-[[kv_namespaces]]
-binding = "CRAWL_CACHE"
-id = "xxx"
-
-[[kv_namespaces]]
-binding = "SERP_CACHE"
-id = "xxx"
-```
+### Cache Layer (Optional)
+If needed later, add Redis on Railway for short-lived caches. For now, store
+status and outputs in Postgres to avoid in-memory resets.
 
 ---
 
@@ -391,41 +382,43 @@ Agent 1  Agent 2  Agent 3    (wait)
    └────────┼────────┘
             │
             ▼
-    Results merged in KV
+    Results merged in Postgres
 ```
 
-### Phase 2: Sequential Processing (Chained via Queues)
+### Phase 2: Sequential Processing (Chained via Job State)
 ```
 Merged extraction results
            │
            ▼
     Agent 4: Keyword Expansion
            │
-           │ (Queue: expansion-complete)
+           │ (Status: expansion_complete)
            ▼
     Agent 5: Clustering
            │
-           │ (Queue: clustering-complete)
+           │ (Status: clustering_complete)
            ▼
     Agent 6: Intent Classification
            │
-           │ (Queue: intent-complete)
+           │ (Status: intent_complete)
            ▼
     Agent 7: User-State Routing
            │
            ▼
-    Final outputs to D1
+    Final outputs to Postgres
 ```
 
 ---
 
-## Frontend Architecture (Cloudflare Pages)
+## Future: Frontend Architecture (Railway Web)
+The wizard + live output panel below are planned. Current UI is a Stage 1
+single-page flow (inputs → clusters → keyword metrics).
 
 ### No-Tab Design: Step Wizard with Live Updates
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  SEO Clustering Engine                                    [?]   │
+│  Keyword Cluster Engine                                  [?]   │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
 │  ┌─────────────────────────────────────────────────────────┐   │
@@ -563,23 +556,14 @@ description: Classify web pages into SEO-relevant categories (pricing, demo, sec
 // GET /api/projects/:id/outputs/:type
 // Returns specific output (clusters, keywords, routing, etc.)
 
-// WebSocket /api/projects/:id/stream
+// SSE or WebSocket /api/projects/:id/stream
 // Real-time updates as agents complete
 ```
 
 ### Agent Communication
 ```typescript
-// Internal: Worker-to-Worker via Service Bindings
-// Agents communicate through Cloudflare Service Bindings for zero-latency calls
-
-// wrangler.toml
-[[services]]
-binding = "URL_EXTRACTOR"
-service = "url-extractor"
-
-[[services]]
-binding = "COMPETITOR_ANALYZER"  
-service = "competitor-analyzer"
+// Internal: Backend modules or background jobs
+// Agents are invoked by the orchestrator as internal functions or job steps.
 ```
 
 ---
@@ -660,13 +644,13 @@ service = "competitor-analyzer"
 
 ---
 
-## Implementation Roadmap
+## Implementation Roadmap (Railway)
 
 ### Phase 1: Foundation (Week 1-2)
-- [ ] Set up Cloudflare Pages project
-- [ ] Configure D1 database with schema
-- [ ] Set up KV namespaces
-- [ ] Create orchestrator worker
+- [ ] Create Railway project and link repo
+- [ ] Add Postgres plugin and run migrations
+- [ ] Configure env vars (OPENAI, DATAFORSEO, DATABASE_URL)
+- [ ] Create Express backend with orchestrator routes
 - [ ] Build basic frontend wizard UI
 
 ### Phase 2: Extraction Agents (Week 3-4)
@@ -674,14 +658,14 @@ service = "competitor-analyzer"
 - [ ] Implement Competitor Analyzer agent
 - [ ] Implement Data Source Connector agent
 - [ ] Test parallel execution
-- [ ] Build merge logic for extraction results
+- [ ] Build merge logic for extraction results in Postgres
 
 ### Phase 3: Processing Pipeline (Week 5-6)
 - [ ] Implement Keyword Expander agent
 - [ ] Implement Clustering Engine agent
 - [ ] Implement Intent Classifier agent
 - [ ] Implement User-State Router agent
-- [ ] Configure Queues for task chaining
+- [ ] Add job sequencing (status table + background runner)
 
 ### Phase 4: Skills & Polish (Week 7-8)
 - [ ] Create page-type-detector skill
@@ -689,7 +673,7 @@ service = "competitor-analyzer"
 - [ ] Create proof-block-generator skill
 - [ ] Create cluster-taxonomy-builder skill
 - [ ] Build export functionality (CSV, JSON)
-- [ ] Add WebSocket real-time updates
+- [ ] Add SSE or WebSocket real-time updates
 
 ### Phase 5: Testing & Launch (Week 9-10)
 - [ ] End-to-end testing
@@ -704,29 +688,26 @@ service = "competitor-analyzer"
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
-| Frontend framework | React (via Vite) | Fast builds, good Cloudflare Pages support |
+| Frontend framework | React (via Vite) | Fast builds, small bundle |
 | State management | Zustand | Lightweight, no boilerplate |
 | Styling | Tailwind CSS | Rapid iteration, small bundle |
-| Real-time updates | WebSocket via Durable Objects | Persistent connections for live status |
-| Task queue | Cloudflare Queues | Native integration, automatic retries |
-| Database | D1 | Edge-native, zero config |
-| Cache | KV | Fast reads for intermediate results |
-| Worker communication | Service Bindings | Zero-latency internal calls |
+| Backend | Node + Express | Single service hosts API + SPA |
+| Real-time updates | SSE or WebSocket | Push agent status to UI |
+| Job orchestration | DB-backed job status | Simple sequencing without extra infra |
+| Database | Postgres (Railway) | Durable, SQL-standard |
+| Cache (optional) | Redis (Railway) | Fast reads for hot data |
 
 ---
 
-## Cost Estimation (Cloudflare)
+## Cost Estimation (Railway + APIs)
 
-| Resource | Free Tier | Paid Estimate |
-|----------|-----------|---------------|
-| Workers requests | 100k/day | $0.50/million |
-| D1 reads | 5M/month | $0.001/million |
-| D1 writes | 100k/month | $1.00/million |
-| KV reads | 100k/day | $0.50/million |
-| Queues | 1M/month | $0.40/million |
-| Pages | Unlimited | Free |
+| Resource | Notes |
+|----------|-------|
+| Railway Web | Based on runtime + usage |
+| Railway Postgres | Based on storage + connections |
+| OpenAI + DataForSEO | Primary variable cost drivers |
 
-**Estimated monthly cost for moderate usage: $5-15/month**
+**Estimated monthly cost depends on traffic and API usage.**
 
 ---
 
@@ -734,17 +715,17 @@ service = "competitor-analyzer"
 
 1. **API Authentication**: JWT tokens for user sessions
 2. **Data isolation**: Project IDs scoped to user accounts
-3. **Rate limiting**: Per-user request limits via Workers
+3. **Rate limiting**: Per-user limits at the Express layer
 4. **Input validation**: Zod schemas on all inputs
-5. **Secrets**: Cloudflare Secrets for API keys (GSC, GA4, etc.)
+5. **Secrets**: Railway environment variables for API keys
 
 ---
 
 ## Monitoring & Observability
 
-1. **Cloudflare Analytics**: Built-in request/error metrics
-2. **Custom logging**: Workers Logpush to external service
-3. **Health checks**: Cron triggers for agent health
+1. **Railway metrics**: Built-in logs + request metrics
+2. **Structured logging**: JSON logs for agent runs
+3. **Health checks**: Simple `/health` endpoint
 4. **Alerts**: Webhook notifications on pipeline failures
 
 ---
@@ -752,8 +733,8 @@ service = "competitor-analyzer"
 ## File Structure
 
 ```
-/seo-clustering-engine
-├── /frontend                    # Cloudflare Pages
+/keyword-cluster-railway
+├── /frontend                    # Vite/React SPA
 │   ├── /src
 │   │   ├── /components
 │   │   │   ├── StepWizard.tsx
@@ -773,7 +754,11 @@ service = "competitor-analyzer"
 │   ├── package.json
 │   └── vite.config.ts
 │
-├── /workers                      # Cloudflare Workers
+├── /server                      # Railway backend (Express)
+│   ├── index.js
+│   └── package.json
+│
+├── /workers                     # Agent logic (invoked by server)
 │   ├── orchestrator.ts
 │   ├── url-extractor.ts
 │   ├── competitor-analyzer.ts
@@ -806,10 +791,10 @@ service = "competitor-analyzer"
 │   ├── schemas.ts
 │   └── utils.ts
 │
-├── /migrations                   # D1 database migrations
+├── /migrations                   # Postgres migrations
 │   └── 001_initial.sql
 │
-├── wrangler.toml                 # Cloudflare config
+├── Dockerfile                    # Railway build/runtime
 └── package.json
 ```
 
@@ -917,8 +902,8 @@ interface ProofBlock {
 ## Next Steps
 
 1. **Validate architecture** with stakeholder review
-2. **Set up Cloudflare account** with required services
-3. **Create GitHub repo** with CI/CD via Cloudflare Pages
+2. **Set up Railway project** with Postgres plugin
+3. **Connect GitHub repo** for Railway deploys
 4. **Build orchestrator first** as the coordination layer
 5. **Iterate on agents** one at a time with unit tests
 

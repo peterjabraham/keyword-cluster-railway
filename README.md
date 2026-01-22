@@ -37,6 +37,7 @@ and observable.
 
 ## Docs
 
-- `docs/seo-clustering-tech-plan.md` — full technical plan
-- `docs/seo-clustering-walkthrough.md` — beginner-friendly implementation guide
+- `docs/keyword-cluster-tech-plan.md` — full technical plan
+- `docs/keyword-cluster-walkthrough.md` — beginner-friendly implementation guide
+- `docs/keyword-cluster-data-schema.md` — data schema + flow reference
 
