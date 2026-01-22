@@ -762,6 +762,44 @@ export default function App() {
           )}
         </div>
       </section>
+
+      <section className="mx-auto max-w-6xl px-6 pb-12">
+        <details className="rounded-lg border border-slate-800 bg-slate-900/50 p-4">
+          <summary className="cursor-pointer text-sm font-semibold text-slate-200">
+            General Info
+          </summary>
+          <ul className="mt-3 space-y-2 text-xs text-slate-300">
+            <li>
+              <span className="text-slate-200">Cluster score:</span> A model-provided
+              ranking hint (0-100). It controls sorting and auto-selection only.
+            </li>
+            <li>
+              <span className="text-slate-200">Project ID:</span> Created when you
+              click Generate Clusters. It ties inputs/outputs to one record.
+            </li>
+            <li>
+              <span className="text-slate-200">Country:</span> Sets the DataForSEO
+              location code (UK/US), which affects volumes and CPC.
+            </li>
+            <li>
+              <span className="text-slate-200">Min volume filter:</span> When enabled,
+              keywords under volume 10 are excluded.
+            </li>
+            <li>
+              <span className="text-slate-200">Rate limiting:</span> Selecting all
+              clusters can reduce per-cluster output to avoid limits.
+            </li>
+            <li>
+              <span className="text-slate-200">Keyword sanitation:</span> Invalid
+              characters are stripped before sending to DataForSEO.
+            </li>
+            <li>
+              <span className="text-slate-200">Downloads:</span> Cluster CSV is
+              available after clusters are generated; Keyword CSV after analysis.
+            </li>
+          </ul>
+        </details>
+      </section>
     </div>
   );
 }
