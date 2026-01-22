@@ -108,7 +108,8 @@ CREATE TABLE project_outputs (
 - `project_outputs.stage1_keywords`
 
 ### 5) CSV export
-`GET /api/stage1/projects/:id/keywords?format=csv`
+- `GET /api/stage1/projects/:id/clusters?format=csv`
+- `GET /api/stage1/projects/:id/keywords?format=csv`
 
 ---
 
@@ -128,6 +129,7 @@ CREATE TABLE project_outputs (
 - `minVolumeEnabled`
 - `maxRowsPerCluster` (cap final rows per cluster)
 - `clusterLimitMode` + `maxClusters` (optional; can be set to 0/none to disable)
+ - Keyword sanitization removes symbols before DataForSEO requests.
 
 ---
 

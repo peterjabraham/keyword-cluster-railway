@@ -1,38 +1,27 @@
-# SEO Clustering Engine
+# Keyword Cluster Engine
 
-Agent-based SEO clustering pipeline with a step-based wizard UI and progressive
-outputs. The system runs on Cloudflare Workers, D1, KV, and Queues, and
-separates extraction agents from sequential processing agents to keep work fast
-and observable.
+Agent-based keyword clustering pipeline with a step-based wizard UI and progressive
+outputs. The system runs on **Railway** (Express + Postgres) and separates extraction
+agents from sequential processing to keep work fast and observable.
 
 ## Overview
 
-- **Frontend (Cloudflare Pages)**: Vite + React wizard that collects project
-  context, URLs, audience, constraints, data sources, and user-state routing
-  inputs. Output panel updates as each agent completes.
-- **Orchestrator Worker**: Receives project payloads, starts parallel agents,
-  chains dependent tasks through queues, and serves status/output endpoints.
-- **Agents (Workers)**:
-  1. URL Extractor
-  2. Competitor Analyzer
-  3. Data Source Connector
-  4. Keyword Expander
-  5. Clustering Engine
-  6. Intent Classifier
-  7. User-State Router
-- **Storage**:
-  - D1 for structured outputs (clusters, keywords, routing rules)
-  - KV for session state and cached intermediate results
-- **Real-time updates**: WebSocket stream for agent status + partial outputs.
+- **Frontend**: Vite + React wizard that collects project context, URLs, audience,
+  constraints, and cluster selections. Output panel updates as each stage completes.
+- **Backend (Express)**: Provides Stage 1 API endpoints, orchestrates OpenAI cluster
+  suggestions and DataForSEO keyword metrics, and serves the frontend build.
+- **Storage**: Railway Postgres via `projects` and `project_outputs` tables.
+- **Real-time updates**: SSE stream at `/api/projects/:id/stream`.
 
 ## Project Layout
 
 ```
-/frontend     # Cloudflare Pages UI (Vite + React)
-/workers      # Cloudflare Workers (orchestrator + agents)
+/frontend     # Vite + React SPA (built to dist/, served by Express)
+/server       # Express backend (index.js)
 /shared       # Shared types/schemas/utils
-/migrations   # D1 migrations
-/skills       # Skill specs + scripts
+/migrations   # Postgres migrations
+/skills       # Skill specs + scripts (future)
+/docs         # Technical docs
 ```
 
 ## Docs
@@ -41,3 +30,49 @@ and observable.
 - `docs/keyword-cluster-walkthrough.md` — beginner-friendly implementation guide
 - `docs/keyword-cluster-data-schema.md` — data schema + flow reference
 
+## Railway MCP Server Integration
+
+This project includes Railway MCP Server support for natural language deployment and
+management. The configuration is at `.cursor/mcp.json`.
+
+**Prerequisites**
+- [Railway CLI](https://docs.railway.com/guides/cli) installed and authenticated.
+
+**Example commands (in Cursor)**
+- `Deploy this project to Railway and generate a domain.`
+- `Pull environment variables for this project.`
+- `Create a development environment cloned from production.`
+
+See [Railway MCP Server docs](https://docs.railway.com/reference/mcp-server) for more.
+
+## Environment Variables (Railway)
+
+Set these in Railway (or `.env` locally):
+- `OPENAI_API_KEY`
+- `OPENAI_MODEL` (optional, e.g. `gpt-4o-mini`)
+- `DATAFORSEO_LOGIN`
+- `DATAFORSEO_PASSWORD`
+- `DATABASE_URL` (from Postgres plugin)
+
+## Quick Start (Local)
+
+```bash
+# Install dependencies
+npm install
+
+# Build frontend
+npm --workspace frontend run build
+
+# Start server
+npm --workspace server run start
+```
+
+Open `http://localhost:3000`.
+
+## Deployment (Railway)
+
+1. Push to GitHub.
+2. Create a Railway project and link the repo.
+3. Add Postgres plugin.
+4. Set environment variables.
+5. Deploy (Railway auto-builds using `Dockerfile`).

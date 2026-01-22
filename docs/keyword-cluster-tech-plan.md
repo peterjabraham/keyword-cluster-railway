@@ -30,6 +30,7 @@
 - **Stage 1 flow**: Create project → Generate clusters → Select clusters → Run keyword analysis → CSV export.
 - **Integrations**: OpenAI for cluster suggestions; DataForSEO for keyword ideas + metrics.
 - **Status**: SSE stream at `/api/projects/:id/stream` broadcasts `status` and `output`.
+- **UX notes**: Cluster selection controls + Clusters CSV live in the Cluster suggestions card; Keywords CSV in results.
 
 ## Future System Architecture Overview (Planned)
 
