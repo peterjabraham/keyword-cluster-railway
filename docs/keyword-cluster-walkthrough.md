@@ -24,15 +24,16 @@ you are building.
 3. Run migrations `migrations/001_initial.sql` and `migrations/002_project_outputs.sql`.
 4. Open the app (single Railway URL) and use:
    - **Generate Clusters** (OpenAI)
-   - Select clusters
+   - Select clusters (Select all/none at the top of the Cluster suggestions card)
    - **Run Keyword Analysis** (DataForSEO)
-   - Download CSV from the results panel
+   - Download **Clusters CSV** or **Keywords CSV**
 
 **Active Stage 1 API endpoints**
 - `POST /api/stage1/projects` (create project)
 - `POST /api/stage1/projects/:id/clusters` (OpenAI cluster suggestions)
 - `POST /api/stage1/projects/:id/selection` (persist selection)
 - `POST /api/stage1/projects/:id/keywords` (DataForSEO metrics + enrichment)
+- `GET /api/stage1/projects/:id/clusters?format=csv` (Clusters CSV export)
 - `GET /api/stage1/projects/:id/keywords?format=csv` (CSV export)
 - `GET /api/dataforseo/test|errors|id_list|sanity`
 - `GET /api/projects/:id/stream` (SSE status/output updates)
@@ -41,9 +42,31 @@ you are building.
 - **Missing DataForSEO credentials**: metrics are blank or errors show in Diagnostics.
 - **Rate limiting**: queued banners appear; retry after a minute.
 - **No metrics**: try US locale or disable min-volume filter.
+- **Invalid keywords**: sanitization strips symbols before sending to DataForSEO.
 
 **Restrictions**
 - Stage 1 only; multi-agent pipeline is planned but not wired yet.
+- Railway restarts wipe in-memory UI state; Project ID is created on Generate Clusters.
+
+---
+
+## Railway MCP Server (Optional)
+
+You can use the [Railway MCP Server](https://docs.railway.com/reference/mcp-server) for
+natural language deployment and management from Cursor.
+
+**Setup**
+1. Install the [Railway CLI](https://docs.railway.com/guides/cli) and authenticate (`railway login`).
+2. The MCP config is already at `.cursor/mcp.json`.
+3. Restart Cursor to pick up the MCP server.
+
+**Example commands**
+- `Deploy this project to Railway and generate a domain.`
+- `Pull environment variables for this project and save to .env.`
+- `Create a development environment cloned from production.`
+
+See the [Railway MCP GitHub repo](https://github.com/railwayapp/railway-mcp-server) for
+available tools.
 
 ---
 
