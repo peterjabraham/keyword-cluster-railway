@@ -11,6 +11,7 @@ const {
   computeStage1ClusterTotals,
   stage1ClusterTotalsToCsv
 } = require("./utils/clusterTotals");
+const { limitClusters } = require("./utils/clusterLimiter");
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -226,52 +227,6 @@ const guessClusterForKeyword = (keyword, clusters) => {
     return matches[0].cluster;
   }
   return clusters[0] ?? { name: "General", concern: "" };
-};
-
-const limitClusters = (clusters = [], maxClusters = 0, mode = "none") => {
-  const limit = Number(maxClusters ?? 0);
-  if (!limit || limit <= 0 || clusters.length <= limit) {
-    return clusters;
-  }
-
-  const sorted = [...clusters].sort(
-    (a, b) => (b.score ?? 0) - (a.score ?? 0)
-  );
-
-  if (mode !== "banded") {
-    return sorted.slice(0, limit);
-  }
-
-  const grouped = sorted.reduce((acc, cluster) => {
-    const key = (cluster.intentStage ?? "unknown").toLowerCase();
-    if (!acc[key]) {
-      acc[key] = [];
-    }
-    acc[key].push(cluster);
-    return acc;
-  }, {});
-
-  const stages = Object.keys(grouped);
-  if (!stages.length) {
-    return sorted.slice(0, limit);
-  }
-
-  const baseQuota = Math.floor(limit / stages.length);
-  let remainder = limit - baseQuota * stages.length;
-  const selection = [];
-
-  stages.forEach((stage) => {
-    const take = Math.min(grouped[stage].length, baseQuota);
-    selection.push(...grouped[stage].slice(0, take));
-  });
-
-  if (remainder > 0) {
-    const overflow = stages.flatMap((stage) => grouped[stage].slice(baseQuota));
-    overflow.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
-    selection.push(...overflow.slice(0, remainder));
-  }
-
-  return selection.slice(0, limit);
 };
 
 const buildKeywordFallbackPrompt = (clusters, input) => ({
@@ -595,6 +550,35 @@ async function dataForSeoMetrics(seedKeywords, locationCode) {
         (typeof item.competition === "string" ? item.competition : "")
     }))
     .filter((item) => item.keyword);
+}
+
+async function dataForSeoKeywordIdeasWithMetrics(seedKeywords, locationCode) {
+  const sanitizedKeywords = sanitizeKeywordList(seedKeywords).slice(0, 20);
+  if (!sanitizedKeywords.length) {
+    return [];
+  }
+
+  const payload = [
+    {
+      location_code: locationCode,
+      language_code: "en",
+      keywords: sanitizedKeywords,
+      sort_by: "search_volume"
+    }
+  ];
+
+  const data = await fetchDataForSeo(
+    "keywords_data/google_ads/keywords_for_keywords/live",
+    payload
+  );
+
+  const task = data?.tasks?.[0];
+  if (task && task.status_code && task.status_code !== 20000) {
+    throw new Error(`DataForSEO task error: ${task.status_message}`);
+  }
+
+  const items = task?.result?.[0]?.items ?? task?.result ?? [];
+  return Array.isArray(items) ? items : [];
 }
 
 function buildClusterTaxonomy(keywords) {
@@ -1462,17 +1446,51 @@ app.post("/api/stage1/projects/:id/keywords", async (req, res) => {
     audience,
     effectiveInput
   );
-  const limitedSeeds = seedKeywords.slice(0, 20);
   const locationCode = getLocationCode(effectiveInput.country);
   const minVolumeEnabled = effectiveInput.minVolumeEnabled ?? true;
   const minVolume = 10;
   let metrics = [];
   let dataForSeoStatus = { status: "ok", message: "" };
-  let keywordIdeas = [];
   try {
-    keywordIdeas = await dataForSeoKeywords(limitedSeeds, locationCode);
-    const metricSeeds = keywordIdeas.length ? keywordIdeas : limitedSeeds;
-    metrics = await dataForSeoMetrics(metricSeeds, locationCode);
+    const perClusterMetrics = [];
+    for (const cluster of limitedClusters) {
+      const ideas = await dataForSeoKeywordIdeasWithMetrics(
+        [cluster.name],
+        locationCode
+      );
+      const filtered = ideas
+        .filter((item) => item?.keyword)
+        .filter((item) => applyExclusions(item.keyword, exclusions))
+        .filter((item) => {
+          if (!minVolumeEnabled) {
+            return true;
+          }
+          return Number(item.search_volume ?? 0) >= minVolume;
+        })
+        .sort(
+          (a, b) => Number(b.search_volume ?? 0) - Number(a.search_volume ?? 0)
+        )
+        .slice(0, Number(effectiveInput.maxRowsPerCluster ?? 50) || 50)
+        .map((item) => ({
+          keyword: item.keyword,
+          searchVolume: item.search_volume ?? 0,
+          cpc: item.cpc ?? 0,
+          competition:
+            item.competition_index ??
+            (typeof item.competition === "number" ? item.competition : 0),
+          competitionLevel:
+            item.competition_level ??
+            (typeof item.competition === "string" ? item.competition : "")
+        }))
+        .filter((item) => item.keyword);
+
+      // Attach cluster context for later row-building.
+      filtered.forEach((entry) => {
+        perClusterMetrics.push({ ...entry, _cluster: cluster });
+      });
+    }
+
+    metrics = perClusterMetrics;
   } catch (error) {
     console.warn("DataForSEO metrics failed:", error.message);
     dataForSeoStatus = {
@@ -1483,54 +1501,70 @@ app.post("/api/stage1/projects/:id/keywords", async (req, res) => {
   if (metrics.length === 0 && dataForSeoStatus.status !== "error") {
     dataForSeoStatus = {
       status: "empty",
-      message: keywordIdeas.length
-        ? "DataForSEO returned keywords but no metrics. Check the metrics endpoint."
-        : "DataForSEO returned zero items. Metrics will be blank."
+      message: "DataForSEO returned zero items. Metrics will be blank."
     };
   }
-
-  let filteredMetrics = metrics;
-  if (minVolumeEnabled) {
-    filteredMetrics = metrics.filter(
-      (item) => Number(item.searchVolume ?? 0) >= minVolume
-    );
-    if (metrics.length > 0 && filteredMetrics.length === 0) {
-      dataForSeoStatus = {
-        status: "empty",
-        message:
-          "All keyword metrics were below volume 10. Disable the filter to include them."
-      };
-    }
-  }
+  // minVolume filtering is applied per-cluster above, so no global filter needed here.
 
   const competitorBrands = extractBrandTerms(effectiveInput.competitors ?? []);
   const targetBrands = extractBrandTerms([effectiveInput.targetUrl]);
   const brandTerms = [...new Set([...targetBrands, ...competitorBrands])];
 
-  let rows = filteredMetrics
-    .filter((item) => applyExclusions(item.keyword, exclusions))
-    .map((item) => {
-      const matchedCluster =
-        guessClusterForKeyword(item.keyword, limitedClusters) ??
-        limitedClusters[0];
-      const intentStage = matchedCluster?.intentStage
-        ? matchedCluster.intentStage
-        : inferIntentStage(item.keyword);
-      const sourceType = inferSourceType(item.keyword, brandTerms);
-      const competitor = findCompetitorMatch(item.keyword, competitorBrands);
-      return {
-        Keyword: item.keyword,
-        "Search Volume": item.searchVolume ?? "",
-        CPC: item.cpc ?? "",
-        Competition: item.competition ?? "",
-        "Intent Stage": intentStage,
-        "Source Type (brand/generic)": sourceType,
-        Competitor: competitor,
-        "Competitors Bidding": "",
-        Cluster: matchedCluster?.name ?? "",
-        Concern: matchedCluster?.concern || industry
-      };
+  const maxRowsPerCluster = Number(effectiveInput.maxRowsPerCluster ?? 0);
+  const rowsByClusterName = new Map();
+  metrics.forEach((item) => {
+    const cluster = item._cluster ?? null;
+    const clusterName = cluster?.name ?? "General";
+    if (!rowsByClusterName.has(clusterName)) {
+      rowsByClusterName.set(clusterName, []);
+    }
+    rowsByClusterName.get(clusterName).push(item);
+  });
+
+  let rows = [];
+  limitedClusters.forEach((cluster) => {
+    const clusterName = cluster?.name ?? "";
+    const items = rowsByClusterName.get(clusterName) ?? [];
+    const intentStage = cluster?.intentStage || "";
+    const perClusterRows = items
+      .sort((a, b) => Number(b.searchVolume ?? 0) - Number(a.searchVolume ?? 0))
+      .slice(0, maxRowsPerCluster > 0 ? maxRowsPerCluster : items.length)
+      .map((item) => {
+        const sourceType = inferSourceType(item.keyword, brandTerms);
+        const competitor = findCompetitorMatch(item.keyword, competitorBrands);
+        return {
+          Keyword: item.keyword,
+          "Search Volume": item.searchVolume ?? "",
+          CPC: item.cpc ?? "",
+          Competition: item.competition ?? "",
+          "Intent Stage": intentStage || inferIntentStage(item.keyword),
+          "Source Type (brand/generic)": sourceType,
+          Competitor: competitor,
+          "Competitors Bidding": "",
+          Cluster: clusterName,
+          Concern: cluster?.concern || industry
+        };
+      });
+
+    if (perClusterRows.length) {
+      rows.push(...perClusterRows);
+      return;
+    }
+
+    // Ensure every selected cluster appears at least once in the CSV.
+    rows.push({
+      Keyword: clusterName,
+      "Search Volume": "",
+      CPC: "",
+      Competition: "",
+      "Intent Stage": intentStage,
+      "Source Type (brand/generic)": "",
+      Competitor: "",
+      "Competitors Bidding": "",
+      Cluster: clusterName,
+      Concern: cluster?.concern || industry
     });
+  });
 
   if (rows.length === 0) {
     dataForSeoStatus = {
@@ -1543,20 +1577,6 @@ app.post("/api/stage1/projects/:id/keywords", async (req, res) => {
     (a, b) =>
       Number(b["Search Volume"] ?? 0) - Number(a["Search Volume"] ?? 0)
   );
-
-  const maxRowsPerCluster = Number(effectiveInput.maxRowsPerCluster ?? 0);
-  if (maxRowsPerCluster > 0) {
-    const clusterCounts = new Map();
-    rows = rows.filter((row) => {
-      const key = row.Cluster || "General";
-      const current = clusterCounts.get(key) ?? 0;
-      if (current >= maxRowsPerCluster) {
-        return false;
-      }
-      clusterCounts.set(key, current + 1);
-      return true;
-    });
-  }
 
   if (rows.length === 0) {
     dataForSeoStatus = {
