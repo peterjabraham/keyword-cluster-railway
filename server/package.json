@@ -7,6 +7,7 @@
   "scripts": {
     "start": "node index.js",
     "test:sanitize": "node scripts/keyword-sanitizer.test.js",
+    "test:cluster-totals": "node scripts/cluster-totals.test.js",
     "stage1:smoke": "node scripts/stage1-smoke.js"
   },
   "dependencies": {

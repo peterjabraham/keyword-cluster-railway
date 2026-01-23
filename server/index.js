@@ -7,6 +7,10 @@ const {
   normalizeKeywordForDataForSeo,
   sanitizeKeywordList
 } = require("./utils/keywordSanitizer");
+const {
+  computeStage1ClusterTotals,
+  stage1ClusterTotalsToCsv
+} = require("./utils/clusterTotals");
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -1581,6 +1585,33 @@ app.get("/api/stage1/projects/:id/keywords", async (req, res) => {
     res.setHeader(
       "Content-Disposition",
       'attachment; filename="stage1-keywords.csv"'
+    );
+    return res.send(csv);
+  }
+
+  return res.json({ projectId, rows });
+});
+
+app.get("/api/stage1/projects/:id/cluster_totals", async (req, res) => {
+  const projectId = req.params.id;
+  const clusters = await getOutput(projectId, "stage1_clusters");
+  const keywordRows = await getOutput(projectId, "stage1_keywords");
+  if (!clusters || !keywordRows) {
+    return res.status(404).json({
+      error: "Stage 1 clusters/keywords not found. Run clusters and keywords first."
+    });
+  }
+
+  const rows = computeStage1ClusterTotals(clusters, keywordRows);
+  await saveOutput(projectId, "stage1_cluster_totals", rows);
+
+  const format = (req.query.format ?? "json").toString().toLowerCase();
+  if (format === "csv") {
+    const csv = stage1ClusterTotalsToCsv(rows);
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader(
+      "Content-Disposition",
+      'attachment; filename="stage1-cluster-totals.csv"'
     );
     return res.send(csv);
   }

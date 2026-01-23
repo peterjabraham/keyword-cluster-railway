@@ -257,6 +257,9 @@ export default function App() {
     }
   };
 
+  const canRunClusterTotals =
+    !!projectId && clusters.length > 0 && keywords.length > 0;
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
       <header className="border-b border-slate-800 px-6 py-5">
@@ -278,6 +281,27 @@ export default function App() {
             </p>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              className="rounded border border-green-800 bg-green-900 px-3 py-2 text-xs uppercase tracking-widest text-slate-100 hover:bg-green-700 active:bg-green-700 disabled:opacity-50"
+              disabled={!canRunClusterTotals}
+              onClick={() => {
+                if (!projectId) {
+                  return;
+                }
+                window.open(
+                  `/api/stage1/projects/${projectId}/cluster_totals?format=csv`,
+                  "_blank",
+                  "noopener,noreferrer"
+                );
+              }}
+              title={
+                canRunClusterTotals
+                  ? "Download totals CSV"
+                  : "Run clusters and keyword analysis first"
+              }
+            >
+              RUN CLUSTER TOTALS
+            </button>
             <button
               className="rounded border border-green-800 bg-green-900 px-3 py-2 text-xs uppercase tracking-widest text-slate-100 hover:bg-green-700 active:bg-green-700 disabled:opacity-50"
               onClick={handleGenerateClusters}
@@ -769,6 +793,9 @@ export default function App() {
             General Info
           </summary>
           <ul className="mt-3 space-y-2 text-xs text-slate-300">
+          <li>
+              <span className="text-slate-200">Important:</span>For best results refresh your browser before running new clusters or keywords to ensure the latest credentials are used. Be patient as the process may take a few minutes.
+            </li>
             <li>
               <span className="text-slate-200">Cluster score:</span> A model-provided
               ranking hint (0-100). It controls sorting and auto-selection only.
