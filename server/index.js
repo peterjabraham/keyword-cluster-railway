@@ -12,6 +12,10 @@ const {
   stage1ClusterTotalsToCsv
 } = require("./utils/clusterTotals");
 const { limitClusters } = require("./utils/clusterLimiter");
+const {
+  chunkArray,
+  groupKeywordIdeasBySeed
+} = require("./utils/dataForSeoKeywordIdeas");
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -448,19 +452,54 @@ const fetchDataForSeo = async (endpoint, payload, attempt = 1) => {
   }
   const auth = Buffer.from(`${login}:${password}`).toString("base64");
   
+  const isRetryableHttpStatus = (status) =>
+    [408, 429, 500, 502, 503, 504, 522, 524].includes(Number(status));
+
   return scheduleDataForSeo(async () => {
-    const response = await fetch(`https://api.dataforseo.com/v3/${endpoint}`, {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 45000);
+    let response;
+    try {
+      response = await fetch(`https://api.dataforseo.com/v3/${endpoint}`, {
       method: "POST",
       headers: {
         Authorization: `Basic ${auth}`,
         "Content-Type": "application/json"
       },
-      body: JSON.stringify(payload)
-    });
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`DataForSEO error: ${error}`);
+      body: JSON.stringify(payload),
+      signal: controller.signal
+      });
+    } catch (error) {
+      clearTimeout(timeout);
+      if (attempt < maxRetries) {
+        const delayMs =
+          baseDelayMs * Math.pow(2, attempt - 1) + Math.random() * 1000;
+        console.log(
+          `DataForSEO network error: retrying in ${Math.round(delayMs)}ms (attempt ${attempt}/${maxRetries})`
+        );
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        return fetchDataForSeo(endpoint, payload, attempt + 1);
+      }
+      throw error instanceof Error ? error : new Error("DataForSEO network error.");
+    } finally {
+      clearTimeout(timeout);
     }
+
+    if (!response.ok) {
+      const status = response.status;
+      const errorText = await response.text();
+      if (isRetryableHttpStatus(status) && attempt < maxRetries) {
+        const delayMs =
+          baseDelayMs * Math.pow(2, attempt - 1) + Math.random() * 1000;
+        console.log(
+          `DataForSEO HTTP ${status}: retrying in ${Math.round(delayMs)}ms (attempt ${attempt}/${maxRetries})`
+        );
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        return fetchDataForSeo(endpoint, payload, attempt + 1);
+      }
+      throw new Error(`DataForSEO error: ${errorText}`);
+    }
+
     const data = await response.json();
     const task = data?.tasks?.[0];
     
@@ -579,6 +618,35 @@ async function dataForSeoKeywordIdeasWithMetrics(seedKeywords, locationCode) {
 
   const items = task?.result?.[0]?.items ?? task?.result ?? [];
   return Array.isArray(items) ? items : [];
+}
+
+async function dataForSeoKeywordIdeasWithMetricsBySeed(seedKeywords, locationCode) {
+  const sanitizedKeywords = sanitizeKeywordList(seedKeywords).slice(0, 20);
+  if (!sanitizedKeywords.length) {
+    return new Map();
+  }
+
+  const payload = [
+    {
+      location_code: locationCode,
+      language_code: "en",
+      keywords: sanitizedKeywords,
+      sort_by: "search_volume"
+    }
+  ];
+
+  const data = await fetchDataForSeo(
+    "keywords_data/google_ads/keywords_for_keywords/live",
+    payload
+  );
+
+  const task = data?.tasks?.[0];
+  if (task && task.status_code && task.status_code !== 20000) {
+    throw new Error(`DataForSEO task error: ${task.status_message}`);
+  }
+
+  const result = task?.result ?? [];
+  return groupKeywordIdeasBySeed(result, sanitizedKeywords);
 }
 
 function buildClusterTaxonomy(keywords) {
@@ -1453,44 +1521,70 @@ app.post("/api/stage1/projects/:id/keywords", async (req, res) => {
   let dataForSeoStatus = { status: "ok", message: "" };
   try {
     const perClusterMetrics = [];
-    for (const cluster of limitedClusters) {
-      const ideas = await dataForSeoKeywordIdeasWithMetrics(
-        [cluster.name],
-        locationCode
-      );
-      const filtered = ideas
-        .filter((item) => item?.keyword)
-        .filter((item) => applyExclusions(item.keyword, exclusions))
-        .filter((item) => {
-          if (!minVolumeEnabled) {
-            return true;
-          }
-          return Number(item.search_volume ?? 0) >= minVolume;
-        })
-        .sort(
-          (a, b) => Number(b.search_volume ?? 0) - Number(a.search_volume ?? 0)
-        )
-        .slice(0, Number(effectiveInput.maxRowsPerCluster ?? 50) || 50)
-        .map((item) => ({
-          keyword: item.keyword,
-          searchVolume: item.search_volume ?? 0,
-          cpc: item.cpc ?? 0,
-          competition:
-            item.competition_index ??
-            (typeof item.competition === "number" ? item.competition : 0),
-          competitionLevel:
-            item.competition_level ??
-            (typeof item.competition === "string" ? item.competition : "")
-        }))
-        .filter((item) => item.keyword);
+    const clusterNames = limitedClusters.map((cluster) => cluster.name);
+    const chunks = chunkArray(clusterNames, 20);
+    const failedChunks = [];
 
-      // Attach cluster context for later row-building.
-      filtered.forEach((entry) => {
-        perClusterMetrics.push({ ...entry, _cluster: cluster });
-      });
+    for (const chunk of chunks) {
+      try {
+        const grouped = await dataForSeoKeywordIdeasWithMetricsBySeed(
+          chunk,
+          locationCode
+        );
+
+        chunk.forEach((seed) => {
+          const cluster = limitedClusters.find((c) => c.name === seed);
+          const ideas = grouped.get(seed) ?? [];
+          const filtered = ideas
+            .filter((item) => item?.keyword)
+            .filter((item) => applyExclusions(item.keyword, exclusions))
+            .filter((item) => {
+              if (!minVolumeEnabled) {
+                return true;
+              }
+              return Number(item.search_volume ?? 0) >= minVolume;
+            })
+            .sort(
+              (a, b) =>
+                Number(b.search_volume ?? 0) - Number(a.search_volume ?? 0)
+            )
+            .slice(0, Number(effectiveInput.maxRowsPerCluster ?? 50) || 50)
+            .map((item) => ({
+              keyword: item.keyword,
+              searchVolume: item.search_volume ?? 0,
+              cpc: item.cpc ?? 0,
+              competition:
+                item.competition_index ??
+                (typeof item.competition === "number" ? item.competition : 0),
+              competitionLevel:
+                item.competition_level ??
+                (typeof item.competition === "string" ? item.competition : "")
+            }))
+            .filter((item) => item.keyword);
+
+          filtered.forEach((entry) => {
+            perClusterMetrics.push({ ...entry, _cluster: cluster });
+          });
+        });
+      } catch (error) {
+        failedChunks.push({
+          seeds: chunk,
+          message: error instanceof Error ? error.message : "Unknown error"
+        });
+        continue;
+      }
     }
 
     metrics = perClusterMetrics;
+
+    if (failedChunks.length) {
+      dataForSeoStatus = {
+        status: metrics.length ? "ok" : "error",
+        message: metrics.length
+          ? `Partial DataForSEO failures: ${failedChunks.length} batch(es) failed.`
+          : `DataForSEO failed for all batches. Example: ${failedChunks[0]?.message ?? "Unknown error"}`
+      };
+    }
   } catch (error) {
     console.warn("DataForSEO metrics failed:", error.message);
     dataForSeoStatus = {

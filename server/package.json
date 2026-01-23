@@ -9,6 +9,7 @@
     "test:sanitize": "node scripts/keyword-sanitizer.test.js",
     "test:cluster-totals": "node scripts/cluster-totals.test.js",
     "test:cluster-limiter": "node scripts/cluster-limiter.test.js",
+    "test:dataforseo-ideas": "node scripts/dataforseo-keyword-ideas.test.js",
     "stage1:smoke": "node scripts/stage1-smoke.js"
   },
   "dependencies": {
